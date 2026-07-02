@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Tech Pulse</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230ea5e9'/%3E%3Cpath d='M55 15 25 55h18l-8 30 30-40H47z' fill='white'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #121826;
+    --panel-2: #1a2234;
+    --border: #232d42;
+    --text: #e6ebf4;
+    --muted: #8b96ab;
+    --accent: #38bdf8;
+    --accent-2: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: rgba(11, 15, 23, 0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px 10px;
+  }
+  .header-inner {
+    max-width: 860px;
+    margin: 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+  }
+  h1 {
+    font-size: 1.25rem;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    white-space: nowrap;
+  }
+  h1 .bolt { color: var(--accent); -webkit-text-fill-color: var(--accent); }
+  .datenav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+  }
+  .datenav button, .refresh-btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .datenav button:hover, .refresh-btn:hover { border-color: var(--accent); }
+  .datenav button:disabled { opacity: 0.35; cursor: default; border-color: var(--border); }
+  #dateLabel {
+    font-weight: 600;
+    font-size: 0.95rem;
+    min-width: 150px;
+    text-align: center;
+  }
+  #status {
+    max-width: 860px;
+    margin: 0 auto;
+    padding-top: 6px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  #chips {
+    max-width: 860px;
+    margin: 14px auto 0;
+    padding: 0 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chip {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .chip.active { color: var(--text); border-color: var(--accent); background: var(--panel-2); }
+  main {
+    max-width: 1320px;
+    margin: 16px auto 60px;
+    padding: 0 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(225px, 1fr));
+    grid-auto-rows: 94px;
+    grid-auto-flow: dense;
+    gap: 14px;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .thumb {
+    width: 100%;
+    object-fit: cover;
+    display: block;
+    flex: none;
+    background: var(--panel-2);
+  }
+  .fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    background: linear-gradient(135deg, var(--panel-2), #22304d);
+    color: var(--accent);
+  }
+  .card .body {
+    padding: 11px 14px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .card .meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.72rem;
+    color: var(--muted);
+    flex: none;
+  }
+  .badge {
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+  }
+  .card h2 {
+    font-size: 0.95rem;
+    margin: 0;
+    line-height: 1.3;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card:hover h2 { color: var(--accent); }
+  .card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.83rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* --- tile sizes, chosen per article by how much it has to say --- */
+  .s-big  { grid-column: span 2; grid-row: span 4; }
+  .s-big .thumb  { height: 205px; }
+  .s-big h2 { font-size: 1.2rem; -webkit-line-clamp: 2; }
+  .s-big p  { font-size: 0.9rem; -webkit-line-clamp: 4; }
+
+  .s-wide { grid-column: span 2; grid-row: span 2; flex-direction: row; }
+  .s-wide .thumb { width: 40%; height: 100%; }
+  .s-wide h2 { -webkit-line-clamp: 2; }
+
+  .s-med  { grid-row: span 3; }
+  .s-med .thumb { height: 118px; }
+  .s-med h2 { -webkit-line-clamp: 2; }
+  .s-med p  { -webkit-line-clamp: 2; }
+
+  .s-small { grid-row: span 2; }
+  .s-small p { font-size: 0.8rem; -webkit-line-clamp: 2; }
+
+  @media (max-width: 640px) {
+    main { grid-template-columns: 1fr; grid-auto-rows: auto; }
+    .card { grid-column: auto; grid-row: auto; flex-direction: column; }
+    .s-wide .thumb, .thumb { width: 100%; height: 170px; }
+  }
+  .empty, .loading { grid-column: 1 / -1; }
+  .empty, .loading {
+    text-align: center;
+    color: var(--muted);
+    padding: 60px 20px;
+    font-size: 0.95rem;
+  }
+  .spinner {
+    display: inline-block;
+    width: 22px; height: 22px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  footer {
+    max-width: 860px;
+    margin: 0 auto 30px;
+    padding: 0 16px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-align: center;
+  }
+  kbd {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: inherit;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <h1><span class="bolt">&#9889;</span> Daily Tech Pulse</h1>
+    <div class="datenav">
+      <button id="prevDay" title="Previous day">&#9664;</button>
+      <span id="dateLabel"></span>
+      <button id="nextDay" title="Next day">&#9654;</button>
+      <button id="todayBtn" title="Jump to today">Today</button>
+      <button id="refreshBtn" class="refresh-btn" title="Fetch latest news">&#8635; Refresh</button>
+    </div>
+  </div>
+  <div id="status"></div>
+</header>
+
+<div id="chips"></div>
+<main id="feed"></main>
+
+<footer>
+  Tip: press <kbd>Ctrl</kbd>+<kbd>D</kbd> to bookmark this page in Chrome.
+  Summaries come from each publication's own feed &mdash; click a headline to read the full article.
+</footer>
+
+<script>
+"use strict";
+
+const FEEDS = [
+  { name: "The Verge",       url: "https://www.theverge.com/rss/index.xml" },
+  { name: "Ars Technica",    url: "https://feeds.arstechnica.com/arstechnica/index" },
+  { name: "TechCrunch",      url: "https://techcrunch.com/feed/" },
+  { name: "Engadget",        url: "https://www.engadget.com/rss.xml" },
+  { name: "Wired",           url: "https://www.wired.com/feed/rss" },
+  { name: "MIT Tech Review", url: "https://www.technologyreview.com/feed/" },
+  { name: "ZDNet",           url: "https://www.zdnet.com/news/rss.xml" },
+  { name: "IEEE Spectrum",   url: "https://spectrum.ieee.org/feeds/feed.rss" },
+  { name: "New Atlas",       url: "https://newatlas.com/index.rss" },
+  { name: "Gizmodo",         url: "https://gizmodo.com/feed" },
+];
+
+// XML fallback proxies, tried in order if rss2json fails for a given feed.
+const PROXIES = [
+  u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+  u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+  u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+];
+
+const STORE_KEY = "techpulse.items.v3";
+const KEEP_DAYS = 10;          // how many past days of articles to remember
+const SUMMARY_CHARS = 300;
+
+let items = loadItems();       // { link: {title, link, summary, date, source} }
+let selectedDay = startOfDay(new Date());
+let activeSources = new Set(FEEDS.map(f => f.name));
+let fetching = false;
+
+// ---------- storage ----------
+function loadItems() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+    const cutoff = Date.now() - KEEP_DAYS * 86400000;
+    for (const k of Object.keys(raw)) {
+      if (new Date(raw[k].date).getTime() < cutoff) delete raw[k];
+    }
+    return raw;
+  } catch { return {}; }
+}
+function saveItems() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(items)); } catch {}
+}
+
+// ---------- date helpers ----------
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function sameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() &&
+         a.getMonth() === b.getMonth() &&
+         a.getDate() === b.getDate();
+}
+function dayLabel(d) {
+  const today = startOfDay(new Date());
+  if (sameDay(d, today)) return "Today";
+  if (sameDay(d, new Date(today.getTime() - 86400000))) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+// ---------- fetching & parsing ----------
+async function fetchJson(url, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+
+// Primary path: rss2json turns any feed into clean JSON with summaries included.
+async function fetchViaRss2Json(feed) {
+  const data = await fetchJson(
+    "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(feed.url), 15000);
+  if (data.status !== "ok" || !Array.isArray(data.items)) throw new Error("rss2json: " + data.status);
+  return data.items.map(it => {
+    const date = new Date((it.pubDate || "").replace(" ", "T"));
+    if (isNaN(date) || !it.link || !it.title) return null;
+    const fullText = stripHtml(it.content || it.description || "");
+    return {
+      title: stripHtml(it.title),
+      link: it.link,
+      summary: truncate(fullText, SUMMARY_CHARS),
+      rawLen: fullText.length,
+      image: it.thumbnail || (it.enclosure && it.enclosure.link) ||
+             imgFromHtml(it.content || it.description) || "",
+      date: date.toISOString(),
+      source: feed.name,
+    };
+  }).filter(Boolean);
+}
+
+async function fetchWithProxies(url) {
+  for (const proxy of PROXIES) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(proxy(url), { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      let text = await res.text();
+      // allorigins /get style base64 data-URI payloads
+      if (text.startsWith("data:")) {
+        const b64 = text.slice(text.indexOf(",") + 1);
+        text = new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+      }
+      if (text.includes("<rss") || text.includes("<feed") || text.includes("<channel")) return text;
+    } catch { /* try next proxy */ }
+  }
+  throw new Error("all proxies failed");
+}
+
+async function fetchFeed(feed) {
+  try {
+    return await fetchViaRss2Json(feed);
+  } catch {
+    const xml = await fetchWithProxies(feed.url);
+    return parseFeed(xml, feed.name);
+  }
+}
+
+function stripHtml(html) {
+  // DOMParser docs have no browsing context, so embedded <img> tags never load.
+  const doc = new DOMParser().parseFromString(html || "", "text/html");
+  return (doc.body.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function imgFromHtml(html) {
+  const m = /<img[^>]+src=["']([^"']+)["']/i.exec(html || "");
+  return m && /^https?:/.test(m[1]) ? m[1] : "";
+}
+
+// Drop stories that aren't about technology (entertainment, sports, celebrity,
+// shopping-deal posts) unless they also contain a genuinely technical angle.
+const NON_TECH = /\b(movie|movies|film|films|box office|trailer|imax|theaters?|theatres?|cinema|actor|actress|celebrit\w*|singer|album|concert|tv series|season \d+|episode|sitcom|anime|comic[- ]?con|marvel|star wars|superhero|franchise|sequel|reboot|remake|blockbuster|hollywood|showrunner|premiere|sports?|nfl|nba|mlb|nhl|soccer|olympics?|world cup|horoscope|recipe|royal family|kardashian|% off|discount code|coupon|best deals?|deal of the day|prime day|black friday|gift guide)\b/i;
+const STRONG_TECH = /\b(ai|artificial intelligence|machine learning|neural|llm|chatbot|chip|chips|semiconductor|processor|gpu|cpu|robot\w*|drone|quantum|battery|batteries|ev|electric vehicle|self-driving|autonomous|software|hardware|smartphone|android|ios|windows|linux|operating system|cloud|data center|server|cyber\w*|hacker?s?|malware|ransomware|breach|encryption|vpn|startup|crypto\w*|blockchain|rocket|spacex|nasa|satellite|spacecraft|biotech|gene editing|crispr|solar|fusion|nuclear|renewable|internet|broadband|browser|network|5g|6g|vr|ar |virtual reality|augmented reality|headset|wearable|gadget|algorithm|programming|developer|open source|silicon|engineer\w*)\b/i;
+
+function isTech(it) {
+  const text = it.title + " " + it.summary;
+  return !NON_TECH.test(text) || STRONG_TECH.test(text);
+}
+
+function truncate(text, max) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  return cut.slice(0, cut.lastIndexOf(" ")) + "…";
+}
+
+function parseFeed(xmlText, sourceName) {
+  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+  if (doc.querySelector("parsererror")) return [];
+  const out = [];
+
+  const xmlImage = it => {
+    for (const tag of ["media:content", "media:thumbnail", "enclosure"]) {
+      const el = it.getElementsByTagName(tag)[0];
+      const url = el?.getAttribute("url");
+      if (url && /^https?:/.test(url)) return url;
+    }
+    return "";
+  };
+
+  const rssItems = doc.querySelectorAll("item");
+  if (rssItems.length) {
+    rssItems.forEach(it => {
+      const get = tag => (it.querySelector(tag)?.textContent || "").trim();
+      const date = new Date(get("pubDate") || get("date"));
+      if (isNaN(date)) return;
+      const desc = get("description");
+      const encoded = it.getElementsByTagName("content:encoded")[0]?.textContent || "";
+      const fullText = stripHtml(encoded || desc);
+      out.push({
+        title: get("title"),
+        link: get("link") || it.querySelector("guid")?.textContent?.trim() || "",
+        summary: truncate(stripHtml(desc) || fullText, SUMMARY_CHARS),
+        rawLen: fullText.length,
+        image: xmlImage(it) || imgFromHtml(desc) || imgFromHtml(encoded),
+        date: date.toISOString(),
+        source: sourceName,
+      });
+    });
+    return out;
+  }
+
+  doc.querySelectorAll("entry").forEach(it => {  // Atom
+    const get = tag => (it.querySelector(tag)?.textContent || "").trim();
+    const date = new Date(get("published") || get("updated"));
+    if (isNaN(date)) return;
+    const linkEl = it.querySelector('link[rel="alternate"]') || it.querySelector("link");
+    const content = get("content") || get("summary");
+    const fullText = stripHtml(content);
+    out.push({
+      title: get("title"),
+      link: linkEl?.getAttribute("href") || "",
+      summary: truncate(stripHtml(get("summary")) || fullText, SUMMARY_CHARS),
+      rawLen: fullText.length,
+      image: xmlImage(it) || imgFromHtml(content),
+      date: date.toISOString(),
+      source: sourceName,
+    });
+  });
+  return out;
+}
+
+async function refreshAll() {
+  if (fetching) return;
+  fetching = true;
+  const statusEl = document.getElementById("status");
+  statusEl.textContent = "Fetching latest tech news…";
+  document.getElementById("refreshBtn").disabled = true;
+
+  let ok = 0;
+  const results = await Promise.allSettled(FEEDS.map(fetchFeed));
+
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled" && r.value.length) {
+      ok++;
+      for (const item of r.value) {
+        if (item.link && item.title) items[item.link] = item;
+      }
+    }
+    if (r.status === "fulfilled" && r.value.length) return;
+    if (r.status === "rejected") console.warn(FEEDS[i].name, "failed:", r.reason);
+  });
+
+  saveItems();
+  fetching = false;
+  document.getElementById("refreshBtn").disabled = false;
+  const time = new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  statusEl.textContent = "Updated " + time + " — " + ok + "/" + FEEDS.length + " sources responded";
+  render();
+}
+
+// ---------- rendering ----------
+function render() {
+  const today = startOfDay(new Date());
+  document.getElementById("dateLabel").textContent = dayLabel(selectedDay);
+  document.getElementById("nextDay").disabled = sameDay(selectedDay, today);
+  document.getElementById("prevDay").disabled =
+    selectedDay.getTime() <= today.getTime() - (KEEP_DAYS - 1) * 86400000;
+
+  const feedEl = document.getElementById("feed");
+  const dayItems = Object.values(items)
+    .filter(it => sameDay(new Date(it.date), selectedDay) && activeSources.has(it.source) && isTech(it))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  if (!dayItems.length) {
+    feedEl.innerHTML = fetching
+      ? '<div class="loading"><div class="spinner"></div><br>Loading today’s tech news…</div>'
+      : '<div class="empty">No stories for ' + dayLabel(selectedDay).toLowerCase() +
+        ' yet. Hit <b>Refresh</b>, or check back a little later in the day.</div>';
+    return;
+  }
+
+  // Size each tile by how much the article has to say, relative to today's
+  // other stories (quantiles) with absolute floors so a thin news day
+  // doesn't produce giant tiles for one-liners.
+  const lens = dayItems.map(len).sort((a, b) => a - b);
+  const q = p => lens[Math.min(lens.length - 1, Math.floor(p * lens.length))] || 0;
+  const qBig = Math.max(q(0.82), 500), qWide = Math.max(q(0.55), 250), qMed = Math.max(q(0.28), 120);
+
+  function len(it) { return it.rawLen != null ? it.rawLen : it.summary.length; }
+  function sizeClass(it) {
+    const n = len(it);
+    if (n >= qBig && it.image) return "s-big";
+    if (n >= qWide) return "s-wide";
+    if (n >= qMed && it.image) return "s-med";
+    return "s-small";
+  }
+
+  feedEl.innerHTML = dayItems.map(it => {
+    const size = sizeClass(it);
+    const t = new Date(it.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    const thumb = size === "s-small" ? "" : it.image
+      ? '<img class="thumb" loading="lazy" src="' + escapeAttr(it.image) + '" alt="" ' +
+        'onerror="this.outerHTML=\'<div class=&quot;thumb fallback&quot;>&#9889;</div>\'">'
+      : '<div class="thumb fallback">&#9889;</div>';
+    return '<a class="card ' + size + '" href="' + escapeAttr(it.link) + '" target="_blank" rel="noopener">' +
+      thumb +
+      '<div class="body">' +
+        '<div class="meta"><span class="badge">' + escapeHtml(it.source) + '</span><span>' + t + '</span></div>' +
+        '<h2>' + escapeHtml(it.title) + '</h2>' +
+        (it.summary ? '<p>' + escapeHtml(it.summary) + '</p>' : '') +
+      '</div></a>';
+  }).join("");
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+function renderChips() {
+  const el = document.getElementById("chips");
+  el.innerHTML = FEEDS.map(f =>
+    '<span class="chip active" data-source="' + escapeAttr(f.name) + '">' + escapeHtml(f.name) + '</span>'
+  ).join("");
+  el.addEventListener("click", e => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    const name = chip.dataset.source;
+    if (activeSources.has(name) && activeSources.size === FEEDS.length) {
+      // First click isolates that one source.
+      activeSources = new Set([name]);
+    } else if (activeSources.has(name)) {
+      activeSources.delete(name);
+      if (!activeSources.size) activeSources = new Set(FEEDS.map(f => f.name));
+    } else {
+      activeSources.add(name);
+    }
+    document.querySelectorAll(".chip").forEach(c =>
+      c.classList.toggle("active", activeSources.has(c.dataset.source)));
+    render();
+  });
+}
+
+// ---------- wiring ----------
+document.getElementById("prevDay").addEventListener("click", () => {
+  selectedDay = new Date(selectedDay.getTime() - 86400000);
+  render();
+});
+document.getElementById("nextDay").addEventListener("click", () => {
+  selectedDay = new Date(selectedDay.getTime() + 86400000);
+  render();
+});
+document.getElementById("todayBtn").addEventListener("click", () => {
+  selectedDay = startOfDay(new Date());
+  render();
+});
+document.getElementById("refreshBtn").addEventListener("click", refreshAll);
+
+// Roll over to the new day automatically if the tab is left open overnight.
+setInterval(() => {
+  const today = startOfDay(new Date());
+  if (dayLabel(selectedDay) === "Today" && !sameDay(selectedDay, today)) {
+    selectedDay = today;
+    refreshAll();
+  }
+}, 60000);
+
+renderChips();
+render();       // show cached stories instantly
+refreshAll();   // then pull fresh ones
+</script>
+</body>
+</html>
