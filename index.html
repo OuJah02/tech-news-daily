@@ -322,6 +322,13 @@ const FEEDS = [
   { name: "Digital Trends",  url: "https://www.digitaltrends.com/feed/" },
   { name: "The Next Web",    url: "https://thenextweb.com/feed" },
   { name: "BleepingComputer", url: "https://www.bleepingcomputer.com/feed/" },
+  // Low-bias additions: wire/public-broadcast reporting and research
+  // outlets that present technology rather than sell it.
+  { name: "BBC Tech",        url: "https://feeds.bbci.co.uk/news/technology/rss.xml" },
+  { name: "Phys.org",        url: "https://phys.org/rss-feed/technology-news/" },
+  { name: "ScienceDaily",    url: "https://www.sciencedaily.com/rss/top/technology.xml" },
+  { name: "SciTechDaily",    url: "https://scitechdaily.com/feed/" },
+  { name: "New Scientist",   url: "https://www.newscientist.com/subject/technology/feed/" },
 ];
 
 // XML fallback proxies, tried in order if rss2json fails for a given feed.
@@ -524,7 +531,7 @@ const NON_TECH = /\b(movie|movies|film|films|box office|trailer|imax|theaters?|t
 // Shopping/promo posts dressed up as articles ("save $200 on...", "lowest
 // price ever", "our favorite picks"). These are dropped outright — a real
 // news story doesn't need a price tag in the headline.
-const AD_LIKE = /\b(save \$?\d|\$\d+ off|now (just |only )?\$\d|drops? to \$\d|for (just|only) \$\d|under \$\d+|lowest price|best price|all-time low|price drop|on sale (now|today)|deal alert|(great|epic|hot|early|best) deals?\b|deals? of the (day|week)|promo code|preorder now|pre-order now|buy now|don'?t miss (this|out)|sponsored|giveaway|sweepstakes|top picks|best .{0,20}(to buy|you can buy)|(is|are) \d+% off)\b/i;
+const AD_LIKE = /\b(save \$?\d|\$\d+ off|now (just |only )?\$\d|drops? to \$\d|for (just|only) \$\d|under \$\d+|lowest price|best price|all-time low|price drop|on sale (now|today)|deal alert|(great|epic|hot|early|best) deals?\b|deals? of the (day|week)|promo code|preorder now|pre-order now|buy now|don'?t miss (this|out)|sponsored|giveaway|sweepstakes|top picks|best .{0,20}(to buy|you can buy)|(is|are) \d+% off|(plummets?|slashed|discounted|falls|crashes) (by |to )?\$?\d)\b/i;
 const STRONG_TECH = /\b(ai|artificial intelligence|machine learning|neural|llm|chatbot|chip|chips|semiconductor|processor|gpu|cpu|robot\w*|drone|quantum|battery|batteries|ev|electric vehicle|self-driving|autonomous|software|hardware|smartphone|android|ios|windows|linux|operating system|cloud|data center|server|cyber\w*|hacker?s?|malware|ransomware|breach|encryption|vpn|startup|crypto\w*|blockchain|rocket|spacex|nasa|satellite|spacecraft|biotech|gene editing|crispr|solar|fusion|nuclear|renewable|internet|broadband|browser|network|5g|6g|vr|ar |virtual reality|augmented reality|headset|wearable|gadget|algorithm|programming|developer|open source|silicon|engineer\w*)\b/i;
 
 // Sports/watch-guide spam is blocked on the headline alone, with no
@@ -532,8 +539,22 @@ const STRONG_TECH = /\b(ai|artificial intelligence|machine learning|neural|llm|c
 // mention plenty of tech words but are ads, not news.
 const WATCH_SPAM = /\b(how to watch|live ?stream|free stream|kick-?off time|world cup|fifa|rugby|cricket|ufc|boxing|premier league|champions league|grand prix|super bowl)\b/i;
 
+// Advertorial voice: product reviews, buying guides, and pitch pieces.
+// These persuade rather than present — tech context doesn't rescue them.
+const ADVERTORIAL = new RegExp([
+  /review\s*$|\breview\s*[:\-–]|[-–—:|]\s*review\b/.source,
+  /\b(hands[- ]on|first impressions|unboxing|buyer'?s guide|gift guide)\b/.source,
+  /\b(i|we) (tested|tried|used|bought|wore|spent|reviewed)\b|\bi'?ve (used|been using|tested|tried|worn|spent)\b/.source,
+  /\b(my|our) favorite\b|\byou should (buy|get|try|upgrade)\b|\byou need (this|to buy)\b|\byou can finally\b|\byou'?ll love\b/.source,
+  /\bmust[- ]have\b|\bworth (buying|the money|every penny)\b|\bshould you (buy|upgrade)\b/.source,
+  /\btop \d+\b|\b\d+ (best|great|top)\b|\bthe best \w+ (for|of|you|to)\b|\bbest \w+ (to buy|in 2\d{3})\b/.source,
+  /\branked\b|\bwhich (one )?should you\b|\breasons? to (buy|upgrade|switch)\b|\bhere'?s why you (should|need)\b|\bdon'?t buy\b/.source,
+  /^(hey|psst|get|grab|snag|score|meet the|say hello to|upgrade to)\b/.source,
+].join("|"), "i");
+
 function isTech(it) {
   if (WATCH_SPAM.test(it.title)) return false;
+  if (ADVERTORIAL.test(it.title)) return false;
   if (AD_LIKE.test(it.title) || AD_LIKE.test(it.summary)) return false;
   const text = it.title + " " + it.summary;
   return !NON_TECH.test(text) || STRONG_TECH.test(text);
