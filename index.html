@@ -200,6 +200,7 @@
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    flex: none;  /* headline never gets squeezed; the summary yields */
   }
   .card:hover h2 { color: var(--accent); }
   .card p {
@@ -215,23 +216,21 @@
   /* --- tile sizes, chosen per article by how much it has to say --- */
   .s-big  { grid-column: span 2; grid-row: span 4; }
   .s-big .thumb  { height: 205px; }
-  .s-big h2 { font-size: 1.2rem; -webkit-line-clamp: 2; }
+  .s-big h2 { font-size: 1.2rem; }
   .s-big p  { font-size: 0.9rem; -webkit-line-clamp: 5; }
 
   .s-wide { grid-column: span 2; grid-row: span 2; flex-direction: row; }
   .s-wide .thumb { width: 40%; height: 100%; }
-  .s-wide h2 { -webkit-line-clamp: 2; }
 
   .s-med  { grid-row: span 3; }
   .s-med .thumb { height: 118px; }
-  .s-med h2 { -webkit-line-clamp: 2; }
   .s-med p  { -webkit-line-clamp: 3; }
 
   .s-small { grid-row: span 2; flex-direction: row; }
   .s-small .thumb { width: 34%; height: 100%; }
   .s-small .fallback { font-size: 1.5rem; }
   .s-small .body { padding: 9px 12px 11px; gap: 4px; }
-  .s-small h2 { font-size: 0.88rem; -webkit-line-clamp: 2; }
+  .s-small h2 { font-size: 0.88rem; }
   .s-small p { font-size: 0.78rem; -webkit-line-clamp: 2; }
 
   @media (max-width: 640px) {
@@ -528,7 +527,13 @@ const NON_TECH = /\b(movie|movies|film|films|box office|trailer|imax|theaters?|t
 const AD_LIKE = /\b(save \$?\d|\$\d+ off|now (just |only )?\$\d|drops? to \$\d|for (just|only) \$\d|under \$\d+|lowest price|best price|all-time low|price drop|on sale (now|today)|deal alert|(great|epic|hot|early|best) deals?\b|deals? of the (day|week)|promo code|preorder now|pre-order now|buy now|don'?t miss (this|out)|sponsored|giveaway|sweepstakes|top picks|best .{0,20}(to buy|you can buy)|(is|are) \d+% off)\b/i;
 const STRONG_TECH = /\b(ai|artificial intelligence|machine learning|neural|llm|chatbot|chip|chips|semiconductor|processor|gpu|cpu|robot\w*|drone|quantum|battery|batteries|ev|electric vehicle|self-driving|autonomous|software|hardware|smartphone|android|ios|windows|linux|operating system|cloud|data center|server|cyber\w*|hacker?s?|malware|ransomware|breach|encryption|vpn|startup|crypto\w*|blockchain|rocket|spacex|nasa|satellite|spacecraft|biotech|gene editing|crispr|solar|fusion|nuclear|renewable|internet|broadband|browser|network|5g|6g|vr|ar |virtual reality|augmented reality|headset|wearable|gadget|algorithm|programming|developer|open source|silicon|engineer\w*)\b/i;
 
+// Sports/watch-guide spam is blocked on the headline alone, with no
+// tech-keyword rescue — "watch the World Cup free with a VPN" posts
+// mention plenty of tech words but are ads, not news.
+const WATCH_SPAM = /\b(how to watch|live ?stream|free stream|kick-?off time|world cup|fifa|rugby|cricket|ufc|boxing|premier league|champions league|grand prix|super bowl)\b/i;
+
 function isTech(it) {
+  if (WATCH_SPAM.test(it.title)) return false;
   if (AD_LIKE.test(it.title) || AD_LIKE.test(it.summary)) return false;
   const text = it.title + " " + it.summary;
   return !NON_TECH.test(text) || STRONG_TECH.test(text);
@@ -538,7 +543,9 @@ function truncate(text, max) {
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
   const space = cut.lastIndexOf(" ");
-  return (space > max * 0.5 ? cut.slice(0, space) : cut) + "…";
+  return (space > max * 0.5 ? cut.slice(0, space) : cut)
+    .replace(/\s+(to|of|the|a|an|and|but|or|nor|for|with|on|at|in|by|from|its|their|is|are|was|were|will|has|have|had|that|as|when|while|which)$/i, "")
+    + "…";
 }
 
 // Feed-text boilerplate that publishers append to article bodies.
@@ -563,8 +570,12 @@ function splitSentences(text) {
 function cleanSummaryText(html) {
   let t = stripHtml(html);
   for (const re of BOILERPLATE) t = t.replace(re, " ");
+  t = t.replace(/\(\s*(image|photo|picture|screenshot)s?\s*(credit|courtesy|source)?s?:?[^)]*\)/gi, " ")
+       .replace(/\b(image|photo|picture|screenshot)s? (credit|courtesy|source)s?:\s*[^.|]{0,60}/gi, " ")
+       .replace(/\|\s*(image|photo|photograph|picture|gif|video)s?\s*(by\b|:)[^.!?|]{0,80}[.!?]?/gi, " ");
   return splitSentences(t.replace(/\s+/g, " ").trim())
     .filter(s => !JUNK_SENTENCE.test(s))
+    .filter(s => !/^[|\s]*(photo|image|illustration|screenshot|gif|video|credit)s?\s*(by\b|:|courtesy)/i.test(s))
     .join(" ").trim();
 }
 
@@ -578,7 +589,24 @@ function fitSummary(text, budget) {
     if (out.length + s.length + 1 > budget) break;
     out = out ? out + " " + s : s;
   }
-  return out || truncate(text, budget);
+  if (out) return out;
+  // First sentence alone is too long: cut it back to a clause boundary
+  // so it still ends cleanly instead of trailing off with "…".
+  const cut = cleanCut(text.slice(0, budget));
+  if (cut >= 20) return text.slice(0, cut).replace(/[,;:\s—]+$/, "") + ".";
+  return truncate(text, budget);
+}
+
+// Last position where a sentence can be cut and still read complete:
+// punctuation clause first, then a joining word.
+function cleanCut(clip) {
+  let cut = Math.max(clip.lastIndexOf(", "), clip.lastIndexOf("; "),
+                     clip.lastIndexOf(" — "), clip.lastIndexOf(": "));
+  if (cut >= 20) return cut;
+  for (const w of [" and ", " but ", " while ", " after ", " before ", " because ", " which ", " that ", " as "]) {
+    cut = Math.max(cut, clip.lastIndexOf(w));
+  }
+  return cut;
 }
 
 function parseFeed(xmlText, sourceName) {
@@ -700,10 +728,16 @@ function render() {
   const qBig = Math.max(q(0.82), 500), qWide = Math.max(q(0.55), 250), qMed = Math.max(q(0.28), 120);
   function sizeClass(it) {
     const n = len(it);
-    if (n >= qBig && it.image) return "s-big";
-    if (n >= qWide) return "s-wide";
-    if (n >= qMed && it.image) return "s-med";
-    return "s-small";
+    let size = (n >= qBig && it.image) ? "s-big"
+             : n >= qWide ? "s-wide"
+             : (n >= qMed && it.image) ? "s-med"
+             : "s-small";
+    // A headline that can't fit its tile's 3 title lines bumps the tile
+    // up a size until it can — headlines display in full, never clipped.
+    const titleCap = { "s-small": 60, "s-med": 90, "s-wide": 130, "s-big": 999 };
+    const upgrade = { "s-small": "s-med", "s-med": "s-wide", "s-wide": "s-big" };
+    while (it.title.length > titleCap[size]) size = upgrade[size];
+    return size;
   }
 
   // Character budget per tile size — summaries are recomposed from whole
@@ -713,7 +747,8 @@ function render() {
   feedEl.innerHTML = dayItems.map(it => {
     const size = sizeClass(it);
     const t = new Date(it.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-    let summary = fitSummary(it.summary, BUDGET[size]);
+    // Re-clean at render so cached items also benefit from newer scrub rules.
+    let summary = fitSummary(cleanSummaryText(it.summary), BUDGET[size]);
     if (!summary) summary = "Tap to read the full story on " + it.source + ".";
     const fb = topicIcon(it);
     const fbDiv = '<div class=&quot;thumb fallback ' + fb.hue + '&quot;>' + fb.icon + '</div>';
@@ -729,6 +764,50 @@ function render() {
         (summary ? '<p>' + escapeHtml(summary) + '</p>' : '') +
       '</div></a>';
   }).join("");
+
+  fixTitles();
+  fixOverflow();
+}
+
+// Headlines display in full: grant extra lines first, and if the tile
+// still can't hold the headline, upgrade the tile to the next size up.
+// The summary re-fits afterwards via fixOverflow.
+function fixTitles() {
+  const up = { "s-small": "s-med", "s-med": "s-wide", "s-wide": "s-big" };
+  document.querySelectorAll(".card").forEach(card => {
+    const h = card.querySelector("h2");
+    if (!h) return;
+    let clamp = 3, guard = 10;
+    while (guard-- > 0 && h.scrollHeight > h.clientHeight + 2) {
+      const cur = Object.keys(up).find(c => card.classList.contains(c));
+      if (clamp < 5 || !cur) {
+        clamp++;
+        h.style.webkitLineClamp = clamp;
+      } else {
+        card.classList.replace(cur, up[cur]);
+      }
+    }
+  });
+}
+
+// Post-layout pass: character budgets are estimates, so measure each
+// summary against the space it really got (a 3-line headline steals
+// room) and trim at sentence, then clause, boundaries until it fits.
+function fixOverflow() {
+  document.querySelectorAll(".card p").forEach(p => {
+    let guard = 12;
+    while (guard-- > 0 && p.scrollHeight > p.clientHeight + 2) {
+      const t = p.textContent.trim();
+      const sents = splitSentences(t);
+      if (sents.length > 1) { sents.pop(); p.textContent = sents.join(" "); continue; }
+      const cut = cleanCut(t.slice(0, Math.max(0, t.length - 8)));
+      if (cut >= 20) { p.textContent = t.slice(0, cut).replace(/[,;:\s—]+$/, "") + "."; continue; }
+      const words = t.replace(/[….]+$/, "").split(" ");
+      if (words.length <= 5) { p.remove(); break; }
+      words.length = words.length - 4;
+      p.textContent = words.join(" ") + "…";
+    }
+  });
 }
 
 function escapeHtml(s) {
