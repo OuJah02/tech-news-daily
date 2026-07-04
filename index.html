@@ -160,6 +160,12 @@
     background: linear-gradient(135deg, var(--panel-2), #22304d);
     color: var(--accent);
   }
+  /* Topical placeholder hues so imageless stories still look distinct */
+  .fallback.h0 { background: linear-gradient(135deg, #16233f, #123a5c); }
+  .fallback.h1 { background: linear-gradient(135deg, #251b3f, #3b2160); }
+  .fallback.h2 { background: linear-gradient(135deg, #10303a, #14504a); }
+  .fallback.h3 { background: linear-gradient(135deg, #33203a, #55284a); }
+  .fallback.h4 { background: linear-gradient(135deg, #2c2a18, #4a4420); }
   .card .body {
     padding: 11px 14px 13px;
     display: flex;
@@ -221,13 +227,17 @@
   .s-med h2 { -webkit-line-clamp: 2; }
   .s-med p  { -webkit-line-clamp: 3; }
 
-  .s-small { grid-row: span 2; }
-  .s-small p { font-size: 0.8rem; -webkit-line-clamp: 2; }
+  .s-small { grid-row: span 2; flex-direction: row; }
+  .s-small .thumb { width: 34%; height: 100%; }
+  .s-small .fallback { font-size: 1.5rem; }
+  .s-small .body { padding: 9px 12px 11px; gap: 4px; }
+  .s-small h2 { font-size: 0.88rem; -webkit-line-clamp: 2; }
+  .s-small p { font-size: 0.78rem; -webkit-line-clamp: 2; }
 
   @media (max-width: 640px) {
     main { grid-template-columns: 1fr; grid-auto-rows: auto; }
     .card { grid-column: auto; grid-row: auto; flex-direction: column; }
-    .s-wide .thumb, .thumb { width: 100%; height: 170px; }
+    .s-wide .thumb, .s-small .thumb, .thumb { width: 100%; height: 170px; }
   }
   .empty, .loading { grid-column: 1 / -1; }
   .empty, .loading {
@@ -419,6 +429,75 @@ async function fetchWithProxies(url) {
   throw new Error("all proxies failed");
 }
 
+// Topic icon for stories whose feed ships no image — matched to the
+// subject so the placeholder still relates to the article.
+const TOPICS = [
+  [/\bai\b|artificial intelligence|chatbot|llm|neural|machine learning|robot|automat/i, "\u{1F916}"],
+  [/security|hack|malware|breach|ransom|cyber|vulnerab|phish|encrypt/i, "\u{1F512}"],
+  [/space|rocket|nasa|satellite|orbit|mars|lunar|astronaut/i, "\u{1F680}"],
+  [/phone|android|iphone|ios|smartphone|tablet|wearable|smartwatch|app\b/i, "\u{1F4F1}"],
+  [/chip|semiconductor|cpu|gpu|processor|intel|amd|nvidia|silicon|pc\b|laptop/i, "\u{1F4BE}"],
+  [/\bcar\b|\bev\b|vehicle|tesla|driving|automotive|truck/i, "\u{1F697}"],
+  [/battery|energy|solar|nuclear|fusion|power grid|renewable/i, "\u{1F50B}"],
+  [/game|gaming|console|playstation|xbox|nintendo|steam/i, "\u{1F3AE}"],
+  [/startup|funding|ipo|acquisition|billion|investor|stock|market/i, "\u{1F4C8}"],
+  [/dna|gene|quantum|research|study|scientist|biotech/i, "\u{1F9EC}"],
+];
+function topicIcon(it) {
+  const text = it.title + " " + it.summary;
+  for (let i = 0; i < TOPICS.length; i++) {
+    if (TOPICS[i][0].test(text)) return { icon: TOPICS[i][1], hue: "h" + (i % 5) };
+  }
+  return { icon: "⚡", hue: "h0" };
+}
+
+// Background pass: for stories missing an image, fetch the article page
+// through a proxy and lift its og:image / twitter:image. Results are
+// cached in the item store so each article is only fetched once.
+async function fetchTextViaProxies(url) {
+  for (const proxy of PROXIES) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const res = await fetch(proxy(url), { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const text = await res.text();
+        if (text) return text;
+      }
+    } catch { /* try next proxy */ }
+  }
+  return "";
+}
+
+function ogImage(html) {
+  const m = /<meta[^>]+(?:property|name)=["'](?:og:image(?::url)?|twitter:image(?::src)?)["'][^>]*content=["']([^"']+)["']/i.exec(html)
+    || /<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["'](?:og:image(?::url)?|twitter:image(?::src)?)["']/i.exec(html);
+  return m && /^https?:/.test(m[1]) ? m[1] : "";
+}
+
+let hydrating = false;
+async function hydrateImages() {
+  if (hydrating) return;
+  const targets = Object.values(items)
+    .filter(it => !it.image && !it.noImg && sameDay(new Date(it.date), selectedDay))
+    .slice(0, 15);
+  if (!targets.length) return;
+  hydrating = true;
+  let found = 0;
+  await Promise.all([0, 1, 2].map(async worker => {
+    for (let i = worker; i < targets.length; i += 3) {
+      const it = targets[i];
+      const img = ogImage(await fetchTextViaProxies(it.link));
+      if (img) { it.image = img; found++; }
+      else it.noImg = 1;   // don't retry a page that has none
+    }
+  }));
+  hydrating = false;
+  saveItems();
+  if (found) render();
+}
+
 async function fetchFeed(feed) {
   try {
     return await fetchViaRss2Json(feed);
@@ -588,6 +667,7 @@ async function refreshAll() {
   statusEl.textContent = "Updated " + time + " — " + ok + "/" + FEEDS.length + " sources responded";
   statusEl.title = failed.length ? "No response from: " + failed.join(", ") : "";
   render();
+  hydrateImages();
 }
 
 // ---------- rendering ----------
@@ -634,13 +714,13 @@ function render() {
     const size = sizeClass(it);
     const t = new Date(it.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     let summary = fitSummary(it.summary, BUDGET[size]);
-    // On compact tiles a chopped-off clause reads worse than no subtext:
-    // if not even one whole sentence fit, let the headline stand alone.
-    if ((size === "s-small" || size === "s-med") && summary.endsWith("…")) summary = "";
-    const thumb = size === "s-small" ? "" : it.image
+    if (!summary) summary = "Tap to read the full story on " + it.source + ".";
+    const fb = topicIcon(it);
+    const fbDiv = '<div class=&quot;thumb fallback ' + fb.hue + '&quot;>' + fb.icon + '</div>';
+    const thumb = it.image
       ? '<img class="thumb" loading="lazy" src="' + escapeAttr(it.image) + '" alt="" ' +
-        'onerror="this.outerHTML=\'<div class=&quot;thumb fallback&quot;>&#9889;</div>\'">'
-      : '<div class="thumb fallback">&#9889;</div>';
+        'onerror="this.outerHTML=\'' + fbDiv + '\'">'
+      : '<div class="thumb fallback ' + fb.hue + '">' + fb.icon + '</div>';
     return '<a class="card ' + size + '" href="' + escapeAttr(it.link) + '" target="_blank" rel="noopener">' +
       thumb +
       '<div class="body">' +
@@ -684,14 +764,17 @@ function renderChips() {
 document.getElementById("prevDay").addEventListener("click", () => {
   selectedDay = new Date(selectedDay.getTime() - 86400000);
   render();
+  hydrateImages();
 });
 document.getElementById("nextDay").addEventListener("click", () => {
   selectedDay = new Date(selectedDay.getTime() + 86400000);
   render();
+  hydrateImages();
 });
 document.getElementById("todayBtn").addEventListener("click", () => {
   selectedDay = startOfDay(new Date());
   render();
+  hydrateImages();
 });
 document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 
