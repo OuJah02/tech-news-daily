@@ -210,7 +210,7 @@
   .s-big  { grid-column: span 2; grid-row: span 4; }
   .s-big .thumb  { height: 205px; }
   .s-big h2 { font-size: 1.2rem; -webkit-line-clamp: 2; }
-  .s-big p  { font-size: 0.9rem; -webkit-line-clamp: 4; }
+  .s-big p  { font-size: 0.9rem; -webkit-line-clamp: 5; }
 
   .s-wide { grid-column: span 2; grid-row: span 2; flex-direction: row; }
   .s-wide .thumb { width: 40%; height: 100%; }
@@ -219,7 +219,7 @@
   .s-med  { grid-row: span 3; }
   .s-med .thumb { height: 118px; }
   .s-med h2 { -webkit-line-clamp: 2; }
-  .s-med p  { -webkit-line-clamp: 2; }
+  .s-med p  { -webkit-line-clamp: 3; }
 
   .s-small { grid-row: span 2; }
   .s-small p { font-size: 0.8rem; -webkit-line-clamp: 2; }
@@ -322,9 +322,9 @@ const PROXIES = [
   u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
 ];
 
-const STORE_KEY = "techpulse.items.v3";
+const STORE_KEY = "techpulse.items.v4";
 const KEEP_DAYS = 10;          // how many past days of articles to remember
-const SUMMARY_CHARS = 300;
+const STORE_SUMMARY = 480;     // max summary text kept per item (sentence-bounded)
 
 let items = loadItems();       // { link: {title, link, summary, date, source} }
 let selectedDay = startOfDay(new Date());
@@ -334,6 +334,8 @@ let fetching = false;
 // ---------- storage ----------
 function loadItems() {
   try {
+    for (const k of ["techpulse.items.v1", "techpulse.items.v2", "techpulse.items.v3"])
+      localStorage.removeItem(k);
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
     const cutoff = Date.now() - KEEP_DAYS * 86400000;
     for (const k of Object.keys(raw)) {
@@ -383,11 +385,11 @@ async function fetchViaRss2Json(feed) {
   return data.items.map(it => {
     const date = new Date((it.pubDate || "").replace(" ", "T"));
     if (isNaN(date) || !it.link || !it.title) return null;
-    const fullText = stripHtml(it.content || it.description || "");
+    const fullText = cleanSummaryText(it.content || it.description || "");
     return {
       title: stripHtml(it.title),
       link: it.link,
-      summary: truncate(fullText, SUMMARY_CHARS),
+      summary: fitSummary(fullText, STORE_SUMMARY),
       rawLen: fullText.length,
       image: it.thumbnail || (it.enclosure && it.enclosure.link) ||
              imgFromHtml(it.content || it.description) || "",
@@ -439,7 +441,7 @@ function imgFromHtml(html) {
 
 // Drop stories that aren't about technology (entertainment, sports, celebrity,
 // shopping-deal posts) unless they also contain a genuinely technical angle.
-const NON_TECH = /\b(movie|movies|film|films|box office|trailer|imax|theaters?|theatres?|cinema|actor|actress|celebrit\w*|singer|album|concert|tv series|season \d+|episode|sitcom|anime|comic[- ]?con|marvel|star wars|superhero|franchise|sequel|reboot|remake|blockbuster|hollywood|showrunner|premiere|sports?|nfl|nba|mlb|nhl|soccer|olympics?|world cup|horoscope|recipe|royal family|kardashian|% off|discount code|coupon|best deals?|deal of the day|prime day|black friday|gift guide)\b/i;
+const NON_TECH = /\b(movie|movies|film|films|box office|trailer|imax|theaters?|theatres?|cinema|actor|actress|celebrit\w*|singer|album|concert|tv series|season \d+|episode|sitcom|anime|comic[- ]?con|marvel|star wars|superhero|franchise|sequel|reboot|remake|blockbuster|hollywood|showrunner|premiere|sports?|nfl|nba|mlb|nhl|soccer|olympics?|world cup|horoscope|recipe|royal family|kardashian|% off|discount code|coupon|best deals?|deal of the day|prime day|black friday|gift guide|rugby|cricket|ufc|boxing|wrestling|grand prix|premier league|champions league|how to watch|live ?stream|watch .{0,50}\b(free|online|from anywhere))\b/i;
 
 // Shopping/promo posts dressed up as articles ("save $200 on...", "lowest
 // price ever", "our favorite picks"). These are dropped outright — a real
@@ -458,6 +460,46 @@ function truncate(text, max) {
   const cut = text.slice(0, max);
   const space = cut.lastIndexOf(" ");
   return (space > max * 0.5 ? cut.slice(0, space) : cut) + "…";
+}
+
+// Feed-text boilerplate that publishers append to article bodies.
+const BOILERPLATE = [
+  /the post .{0,140} appeared first on .{0,90}$/i,
+  /this (article|story|post|review) (originally |first )?(appeared|was published|ran|posted).{0,120}$/i,
+  /(read more|read on|continue reading|read the (full|original|rest of the) (story|article|post)).{0,80}$/i,
+  /(image|photo|illustration|screenshot|credit)s?( credit| courtesy of)?:\s*[^.|]{2,60}(\||$)/gi,
+  /©.{0,120}$/,
+];
+
+// Sentences that are ads or site plumbing rather than news: affiliate
+// notes, newsletter plugs, deal pitches embedded mid-article.
+const JUNK_SENTENCE = /\b(we may earn|earns? (a |an )?commission|affiliate link|subscribe to|sign up for|newsletter|follow us|click here|tap here|learn more at|shop now|buy now|order now|check out (our|the)|stay up.to.date|join (our|the) .{0,30}(channel|community|discord)|use (promo )?code|promo code|coupon|% off|\$\d+ off|on sale|lowest price|best (buy|price|deals?)|deal (alert|ends)|limited.time|advertisement|sponsored|available (now |today )?(at|on|from) (amazon|walmart|best buy|ebay))\b/i;
+
+function splitSentences(text) {
+  return text.split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/).map(s => s.trim()).filter(Boolean);
+}
+
+// Turn raw feed HTML into clean summary material: strip tags, cut
+// boilerplate, and drop ad/junk sentences entirely.
+function cleanSummaryText(html) {
+  let t = stripHtml(html);
+  for (const re of BOILERPLATE) t = t.replace(re, " ");
+  return splitSentences(t.replace(/\s+/g, " ").trim())
+    .filter(s => !JUNK_SENTENCE.test(s))
+    .join(" ").trim();
+}
+
+// Compose whole sentences up to a character budget so summaries end at
+// a period instead of trailing off mid-thought. Falls back to a word
+// cut only when even the first sentence is too long.
+function fitSummary(text, budget) {
+  if (text.length <= budget) return text;
+  let out = "";
+  for (const s of splitSentences(text)) {
+    if (out.length + s.length + 1 > budget) break;
+    out = out ? out + " " + s : s;
+  }
+  return out || truncate(text, budget);
 }
 
 function parseFeed(xmlText, sourceName) {
@@ -482,11 +524,11 @@ function parseFeed(xmlText, sourceName) {
       if (isNaN(date)) return;
       const desc = get("description");
       const encoded = it.getElementsByTagName("content:encoded")[0]?.textContent || "";
-      const fullText = stripHtml(encoded || desc);
+      const fullText = cleanSummaryText(encoded || desc);
       out.push({
         title: get("title"),
         link: get("link") || it.querySelector("guid")?.textContent?.trim() || "",
-        summary: truncate(stripHtml(desc) || fullText, SUMMARY_CHARS),
+        summary: fitSummary(cleanSummaryText(desc) || fullText, STORE_SUMMARY),
         rawLen: fullText.length,
         image: xmlImage(it) || imgFromHtml(desc) || imgFromHtml(encoded),
         date: date.toISOString(),
@@ -502,11 +544,11 @@ function parseFeed(xmlText, sourceName) {
     if (isNaN(date)) return;
     const linkEl = it.querySelector('link[rel="alternate"]') || it.querySelector("link");
     const content = get("content") || get("summary");
-    const fullText = stripHtml(content);
+    const fullText = cleanSummaryText(content);
     out.push({
       title: get("title"),
       link: linkEl?.getAttribute("href") || "",
-      summary: truncate(stripHtml(get("summary")) || fullText, SUMMARY_CHARS),
+      summary: fitSummary(cleanSummaryText(get("summary")) || fullText, STORE_SUMMARY),
       rawLen: fullText.length,
       image: xmlImage(it) || imgFromHtml(content),
       date: date.toISOString(),
@@ -584,9 +626,17 @@ function render() {
     return "s-small";
   }
 
+  // Character budget per tile size — summaries are recomposed from whole
+  // sentences to fit, so they end at a period, not a visual cutoff.
+  const BUDGET = { "s-big": 280, "s-wide": 120, "s-med": 95, "s-small": 65 };
+
   feedEl.innerHTML = dayItems.map(it => {
     const size = sizeClass(it);
     const t = new Date(it.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    let summary = fitSummary(it.summary, BUDGET[size]);
+    // On compact tiles a chopped-off clause reads worse than no subtext:
+    // if not even one whole sentence fit, let the headline stand alone.
+    if ((size === "s-small" || size === "s-med") && summary.endsWith("…")) summary = "";
     const thumb = size === "s-small" ? "" : it.image
       ? '<img class="thumb" loading="lazy" src="' + escapeAttr(it.image) + '" alt="" ' +
         'onerror="this.outerHTML=\'<div class=&quot;thumb fallback&quot;>&#9889;</div>\'">'
@@ -596,7 +646,7 @@ function render() {
       '<div class="body">' +
         '<div class="meta"><span class="badge">' + escapeHtml(it.source) + '</span><span>' + t + '</span></div>' +
         '<h2>' + escapeHtml(it.title) + '</h2>' +
-        (it.summary ? '<p>' + escapeHtml(it.summary) + '</p>' : '') +
+        (summary ? '<p>' + escapeHtml(summary) + '</p>' : '') +
       '</div></a>';
   }).join("");
 }
