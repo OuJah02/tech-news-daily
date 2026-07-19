@@ -402,10 +402,11 @@ async function fetchViaRss2Json(feed) {
     const date = new Date((it.pubDate || "").replace(" ", "T"));
     if (isNaN(date) || !it.link || !it.title) return null;
     const fullText = cleanSummaryText(it.content || it.description || "");
+    const title = stripHtml(it.title);
     return {
-      title: stripHtml(it.title),
+      title: title,
       link: it.link,
-      summary: fitSummary(fullText, STORE_SUMMARY),
+      summary: bestSummary(fullText, title),
       rawLen: fullText.length,
       image: it.thumbnail || (it.enclosure && it.enclosure.link) ||
              imgFromHtml(it.content || it.description) || "",
@@ -482,26 +483,45 @@ function ogImage(html) {
   return m && /^https?:/.test(m[1]) ? m[1] : "";
 }
 
+// Background deep pass: visit each article's own page, read it, and
+// build the bubble's summary from the full text (plus grab its image
+// if the feed had none). Works a batch at a time; results are cached
+// per article so each page is only ever read once.
 let hydrating = false;
-async function hydrateImages() {
+async function hydrateArticles() {
   if (hydrating) return;
   const targets = Object.values(items)
-    .filter(it => !it.image && !it.noImg && sameDay(new Date(it.date), selectedDay))
-    .slice(0, 15);
+    .filter(it => !it.deep && (it.deepTry || 0) < 3 && sameDay(new Date(it.date), selectedDay))
+    .slice(0, 12);
   if (!targets.length) return;
   hydrating = true;
-  let found = 0;
+  let changed = 0;
   await Promise.all([0, 1, 2].map(async worker => {
     for (let i = worker; i < targets.length; i += 3) {
       const it = targets[i];
-      const img = ogImage(await fetchTextViaProxies(it.link));
-      if (img) { it.image = img; found++; }
-      else it.noImg = 1;   // don't retry a page that has none
+      const html = await fetchTextViaProxies(it.link);
+      if (!html) { it.deepTry = (it.deepTry || 0) + 1; continue; }
+      it.deep = 1;
+      if (!it.image) {
+        const img = ogImage(html);
+        if (img) { it.image = img; changed++; }
+      }
+      const body = cleanSummaryText(articleText(html));
+      if (body.length > 300) {
+        const sum = summarize(body, it.title, STORE_SUMMARY);
+        if (sum) {
+          it.summary = sum;
+          it.rawLen = Math.max(it.rawLen || 0, body.length);
+          changed++;
+        }
+      }
     }
   }));
   hydrating = false;
   saveItems();
-  if (found) render();
+  if (changed) render();
+  // Keep deepening the rest of the day's stories, batch by batch.
+  if (targets.length === 12) setTimeout(hydrateArticles, 5000);
 }
 
 async function fetchFeed(feed) {
@@ -617,6 +637,82 @@ function cleanSummaryText(html) {
   return facts.join(" ").trim();
 }
 
+// ---------- real summarization ----------
+const STOPWORDS = new Set(("a an the and or but if then else when while of in on at to for with by from as is are was " +
+  "were be been being it its this that these those he she they them him his her their we our us you your i me my not " +
+  "no nor so yet has have had do does did done will would can could should shall may might must just also more most " +
+  "much many some any all each every other another about into over after before between during under above below out " +
+  "up down off than too very only own same such both few there here where why how what who whom which whose").split(" "));
+
+const tokenize = s => (s.toLowerCase().match(/[a-z0-9']+/g) || []).filter(w => w.length > 2 && !STOPWORDS.has(w));
+
+// Extractive summarizer: score every sentence of the article by term
+// frequency, overlap with the headline, and position (news ledes carry
+// weight), then compose the top sentences in original order.
+function summarize(text, title, maxChars) {
+  const sents = splitSentences(text)
+    .filter(s => s.length >= 40 && s.length <= 350 && informative(s) && !JUNK_SENTENCE.test(s));
+  if (!sents.length) return "";
+  const freq = {};
+  sents.forEach(s => tokenize(s).forEach(w => { freq[w] = (freq[w] || 0) + 1; }));
+  const titleWords = new Set(tokenize(title || ""));
+  const scored = sents.map((s, i) => {
+    const ws = tokenize(s);
+    let score = 0;
+    ws.forEach(w => { score += (freq[w] || 0) + (titleWords.has(w) ? 3 : 0); });
+    score /= Math.sqrt(ws.length || 1);
+    if (i === 0) score *= 1.6; else if (i < 3) score *= 1.25;
+    return { s, i, score };
+  }).sort((a, b) => b.score - a.score);
+  const picked = [];
+  let total = 0;
+  for (const c of scored) {
+    if (total + c.s.length + 1 > maxChars) continue;
+    picked.push(c);
+    total += c.s.length + 1;
+    if (picked.length >= 4) break;
+  }
+  return picked.sort((a, b) => a.i - b.i).map(c => c.s).join(" ");
+}
+
+// Pull the article's body text out of its full HTML page: JSON-LD
+// articleBody when the site publishes it, else the densest paragraph
+// cluster on the page.
+function articleText(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const data = JSON.parse(s.textContent);
+      const nodes = [].concat(data, data["@graph"] || []);
+      for (const n of nodes) {
+        if (n && typeof n.articleBody === "string" && n.articleBody.length > 400) {
+          return n.articleBody.replace(/\s+/g, " ").slice(0, 9000);
+        }
+      }
+    } catch { /* malformed JSON-LD */ }
+  }
+  doc.querySelectorAll("script,style,nav,header,footer,aside,form,figure,figcaption,button").forEach(e => e.remove());
+  const ps = [...doc.querySelectorAll("p")].filter(p => p.textContent.trim().length > 60);
+  if (!ps.length) return "";
+  const byParent = new Map();
+  ps.forEach(p => byParent.set(p.parentElement, (byParent.get(p.parentElement) || 0) + 1));
+  let best = null, n = 0;
+  byParent.forEach((count, el) => { if (count > n) { n = count; best = el; } });
+  return [...best.children].filter(el => el.tagName === "P")
+    .map(p => p.textContent.trim()).filter(t => t.length > 40)
+    .join(" ").replace(/\s+/g, " ").slice(0, 9000);
+}
+
+// Best stored summary for an item: when the feed carries substantial
+// article text, actually summarize it; otherwise keep its lede as-is.
+function bestSummary(fullText, title) {
+  if (fullText.length > 600) {
+    const sum = summarize(fullText, title, STORE_SUMMARY);
+    if (sum) return sum;
+  }
+  return fitSummary(fullText, STORE_SUMMARY);
+}
+
 // Compose whole sentences up to a character budget so summaries end at
 // a period instead of trailing off mid-thought. When not even the first
 // sentence fits the budget, return it whole anyway — the post-layout
@@ -676,7 +772,7 @@ function parseFeed(xmlText, sourceName) {
       out.push({
         title: get("title"),
         link: get("link") || it.querySelector("guid")?.textContent?.trim() || "",
-        summary: fitSummary(cleanSummaryText(desc) || fullText, STORE_SUMMARY),
+        summary: bestSummary(fullText, get("title")) || fitSummary(cleanSummaryText(desc), STORE_SUMMARY),
         rawLen: fullText.length,
         image: xmlImage(it) || imgFromHtml(desc) || imgFromHtml(encoded),
         date: date.toISOString(),
@@ -696,7 +792,7 @@ function parseFeed(xmlText, sourceName) {
     out.push({
       title: get("title"),
       link: linkEl?.getAttribute("href") || "",
-      summary: fitSummary(cleanSummaryText(get("summary")) || fullText, STORE_SUMMARY),
+      summary: bestSummary(fullText, get("title")) || fitSummary(cleanSummaryText(get("summary")), STORE_SUMMARY),
       rawLen: fullText.length,
       image: xmlImage(it) || imgFromHtml(content),
       date: date.toISOString(),
@@ -736,7 +832,7 @@ async function refreshAll() {
   statusEl.textContent = "Updated " + time + " — " + ok + "/" + FEEDS.length + " sources responded";
   statusEl.title = failed.length ? "No response from: " + failed.join(", ") : "";
   render();
-  hydrateImages();
+  hydrateArticles();
 }
 
 // ---------- rendering ----------
@@ -900,17 +996,17 @@ function renderChips() {
 document.getElementById("prevDay").addEventListener("click", () => {
   selectedDay = new Date(selectedDay.getTime() - 86400000);
   render();
-  hydrateImages();
+  hydrateArticles();
 });
 document.getElementById("nextDay").addEventListener("click", () => {
   selectedDay = new Date(selectedDay.getTime() + 86400000);
   render();
-  hydrateImages();
+  hydrateArticles();
 });
 document.getElementById("todayBtn").addEventListener("click", () => {
   selectedDay = startOfDay(new Date());
   render();
-  hydrateImages();
+  hydrateArticles();
 });
 document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 
