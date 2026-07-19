@@ -601,8 +601,10 @@ function cleanSummaryText(html) {
 }
 
 // Compose whole sentences up to a character budget so summaries end at
-// a period instead of trailing off mid-thought. Falls back to a word
-// cut only when even the first sentence is too long.
+// a period instead of trailing off mid-thought. When not even the first
+// sentence fits the budget, return it whole anyway — the post-layout
+// pass (fixOverflow) measures real space and grows the tile if needed,
+// so text is never chopped into a "…" cliffhanger.
 function fitSummary(text, budget) {
   if (text.length <= budget) return text;
   let out = "";
@@ -611,11 +613,12 @@ function fitSummary(text, budget) {
     out = out ? out + " " + s : s;
   }
   if (out) return out;
-  // First sentence alone is too long: cut it back to a clause boundary
-  // so it still ends cleanly instead of trailing off with "…".
-  const cut = cleanCut(text.slice(0, budget));
-  if (cut >= 20) return text.slice(0, cut).replace(/[,;:\s—]+$/, "") + ".";
-  return truncate(text, budget);
+  const first = splitSentences(text)[0] || text;
+  if (first.length <= budget * 2) return first;
+  // Absurdly long unpunctuated sentence: close it at a clause boundary.
+  const cut = cleanCut(first.slice(0, budget));
+  if (cut >= 20) return first.slice(0, cut).replace(/[,;:\s—]+$/, "") + ".";
+  return first;
 }
 
 // Last position where a sentence can be cut and still read complete:
@@ -770,6 +773,13 @@ function render() {
     const t = new Date(it.date).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     // Re-clean at render so cached items also benefit from newer scrub rules.
     let summary = fitSummary(cleanSummaryText(it.summary), BUDGET[size]);
+    // Older cached items may carry a baked-in "…" cut — close them at a
+    // clause boundary instead of leaving the reader on a cliffhanger.
+    if (/(…|\.\.\.)$/.test(summary)) {
+      const base = summary.replace(/\s*(…|\.\.\.)$/, "");
+      const cut = cleanCut(base);
+      summary = cut >= 20 ? base.slice(0, cut).replace(/[,;:\s—]+$/, "") + "." : "";
+    }
     if (!summary) summary = "Tap to read the full story on " + it.source + ".";
     const fb = topicIcon(it);
     const fbDiv = '<div class=&quot;thumb fallback ' + fb.hue + '&quot;>' + fb.icon + '</div>';
@@ -813,20 +823,26 @@ function fixTitles() {
 
 // Post-layout pass: character budgets are estimates, so measure each
 // summary against the space it really got (a 3-line headline steals
-// room) and trim at sentence, then clause, boundaries until it fits.
+// room). Escalation order: drop trailing sentences → close at a clause
+// boundary with a period → grow the tile a size → complete-sentence
+// fallback. No path ends in a "…" cliffhanger.
 function fixOverflow() {
-  document.querySelectorAll(".card p").forEach(p => {
-    let guard = 12;
+  const up = { "s-small": "s-med", "s-med": "s-wide", "s-wide": "s-big" };
+  document.querySelectorAll(".card").forEach(card => {
+    const p = card.querySelector("p");
+    if (!p) return;
+    let guard = 14;
     while (guard-- > 0 && p.scrollHeight > p.clientHeight + 2) {
       const t = p.textContent.trim();
       const sents = splitSentences(t);
       if (sents.length > 1) { sents.pop(); p.textContent = sents.join(" "); continue; }
-      const cut = cleanCut(t.slice(0, Math.max(0, t.length - 8)));
+      const cut = cleanCut(t.slice(0, Math.max(0, t.length - 4)));
       if (cut >= 20) { p.textContent = t.slice(0, cut).replace(/[,;:\s—]+$/, "") + "."; continue; }
-      const words = t.replace(/[….]+$/, "").split(" ");
-      if (words.length <= 5) { p.remove(); break; }
-      words.length = words.length - 4;
-      p.textContent = words.join(" ") + "…";
+      const cur = Object.keys(up).find(c => card.classList.contains(c));
+      if (cur) { card.classList.replace(cur, up[cur]); continue; }
+      p.textContent = "Tap to read the full story on " +
+        (card.querySelector(".badge")?.textContent || "the source") + ".";
+      break;
     }
   });
 }
